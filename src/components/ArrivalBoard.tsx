@@ -434,7 +434,10 @@ export function ArrivalBoard({
 
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-[#6B7280]">
             <span className="tabular-nums">
-              Updated {lastUpdatedLabel} · {data?.Source === 'live-api' ? 'Live API' : 'Simulated Feed'}
+              Updated {lastUpdatedLabel} ·{' '}
+              {data?.Source === 'live-api'
+                ? 'Live LTA DataMall v3'
+                : 'Simulated Feed (set LTA_ACCOUNT_KEY for live data)'}
             </span>
             <button
               type="button"
@@ -538,8 +541,14 @@ export function ArrivalBoard({
                       </div>
                       <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-[#6B7280]">
                         <span>{svc.Operator}</span>
-                        <span aria-hidden="true">·</span>
-                        <span className="tabular-nums">Every {svc.FrequencyMinutes} min</span>
+                        {svc.FrequencyMinutes > 0 && (
+                          <>
+                            <span aria-hidden="true">·</span>
+                            <span className="tabular-nums">
+                              Every {svc.FrequencyMinutes} min
+                            </span>
+                          </>
+                        )}
                         {svc.NextBus.Feature === 'WAB' && (
                           <>
                             <span aria-hidden="true">·</span>
@@ -595,27 +604,42 @@ export function ArrivalBoard({
                   <div className="px-6 py-4 bg-[#F9FAFB] border-t border-[#E5E7EB]">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                       <div>
-                        <div className="text-xs font-semibold text-[#374151] mb-1.5">
-                          Key Stops Along Route
-                        </div>
-                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[#4B5563]">
-                          {svc.RouteHighlights.map((stopName, i) => (
-                            <span key={stopName} className="inline-flex items-center gap-2">
-                              <span
-                                className={
-                                  i === 0 ? 'font-semibold text-[#111827]' : ''
-                                }
-                              >
-                                {stopName}
-                              </span>
-                              {i < svc.RouteHighlights.length - 1 && (
-                                <span aria-hidden="true" className="text-[#9CA3AF]">
-                                  →
+                        {svc.RouteHighlights.length > 0 ? (
+                          <>
+                            <div className="text-xs font-semibold text-[#374151] mb-1.5">
+                              Key Stops Along Route
+                            </div>
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[#4B5563]">
+                              {svc.RouteHighlights.map((stopName, i) => (
+                                <span key={stopName} className="inline-flex items-center gap-2">
+                                  <span
+                                    className={
+                                      i === 0 ? 'font-semibold text-[#111827]' : ''
+                                    }
+                                  >
+                                    {stopName}
+                                  </span>
+                                  {i < svc.RouteHighlights.length - 1 && (
+                                    <span aria-hidden="true" className="text-[#9CA3AF]">
+                                      →
+                                    </span>
+                                  )}
                                 </span>
-                              )}
+                              ))}
+                            </div>
+                          </>
+                        ) : (
+                          <div className="text-xs text-[#4B5563]">
+                            Origin Stop:{' '}
+                            <span className="font-mono font-medium text-[#111827] tabular-nums">
+                              {svc.NextBus.OriginCode || '—'}
+                            </span>{' '}
+                            · Destination Stop:{' '}
+                            <span className="font-mono font-medium text-[#111827] tabular-nums">
+                              {svc.NextBus.DestinationCode || '—'}
                             </span>
-                          ))}
-                        </div>
+                          </div>
+                        )}
                       </div>
 
                       <button

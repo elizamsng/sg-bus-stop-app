@@ -10,25 +10,57 @@ import {
   NextBusSlot,
 } from '../types/bus';
 
-/**
- * Frontend API Adapter Layer
- * --------------------------
- * Ready to connect to a backend proxy for LTA DataMall Bus Arrival v2:
- * GET https://datamall2.mytransport.sg/ltaodataservice/v3/BusArrival?BusStopCode=XXXXX
- *
- * When establishing the real API connection later:
- * 1. Set API_CONFIG.useLiveApi = true (or drive via import.meta.env.VITE_USE_LIVE_BUS_API)
- * 2. Point API_CONFIG.baseUrl to your backend proxy route (e.g. '/api/bus-arrival')
- *    so the LTA AccountKey stays securely on the server.
- */
 export const API_CONFIG = {
-  useLiveApi: false,
-  baseUrl: '/api/bus-arrival',
+  healthEndpoint: '/api/health',
+  busArrivalEndpoint: '/api/busarrival',
+};
+
+export interface ApiHealthStatus {
+  ok: boolean;
+  ltaKeyConfigured: boolean;
+  refreshIntervalSeconds: number;
+}
+
+const KNOWN_DESTINATIONS: Record<string, string> = {
+  '02089': 'Marina Centre Ter',
+  '02099': 'Marina Centre Ter',
+  '03218': 'Shenton Way Ter',
+  '03239': 'Shenton Way Ter',
+  '05009': 'New Bridge Rd Ter',
+  '10009': 'Bukit Merah Int',
+  '11009': 'Ghim Moh Ter',
+  '11379': 'Buona Vista Ter',
+  '14009': 'HarbourFront Int',
+  '16169': 'Kent Ridge Ter',
+  '17009': 'Clementi Int',
+  '22009': 'Boon Lay Int',
+  '28009': 'Jurong East Int',
+  '43009': 'Bukit Batok Int',
+  '44009': 'Choa Chu Kang Int',
+  '45009': 'Bukit Panjang Int',
+  '46009': 'Woodlands Int',
+  '52009': 'Toa Payoh Int',
+  '53009': 'Bishan Int',
+  '54009': 'Ang Mo Kio Int',
+  '55009': 'Yio Chu Kang Int',
+  '59009': 'Yishun Int',
+  '64009': 'Hougang Ctrl Int',
+  '65009': 'Punggol Int',
+  '66009': 'Serangoon Int',
+  '67009': 'Sengkang Int',
+  '68009': 'Hougang Ctrl Int',
+  '75009': 'Tampines Int',
+  '77009': 'Pasir Ris Int',
+  '80009': 'Geylang Lor 1 Ter',
+  '82009': 'Eunos Int',
+  '84009': 'Bedok Int',
+  '94009': 'Upper East Coast Ter',
+  '95129': 'Changi Airport PTB2',
+  '99009': 'Changi Village Ter',
 };
 
 const LOADS: BusLoad[] = ['SEA', 'SEA', 'SDA', 'LSD'];
 
-// Deterministic pseudo-random generator seeded by stop + service + time bucket
 function seededValue(seedStr: string): number {
   let hash = 2166136261;
   for (let i = 0; i < seedStr.length; i++) {
@@ -79,7 +111,6 @@ function synthesizeServicesForStop(
   lng: number,
   cycleOffset = 0
 ): BusServiceArrival[] {
-  // Minute-based bucket shifts naturally over time, plus manual refresh jitter
   const timeBucket = Math.floor(Date.now() / 60000) + cycleOffset;
 
   return services.map((meta) => {
@@ -104,6 +135,88 @@ function synthesizeServicesForStop(
   });
 }
 
+function emptySlot(): NextBusSlot {
+  return {
+    OriginCode: '',
+    DestinationCode: '',
+    EstimatedArrival: '',
+    Latitude: '',
+    Longitude: '',
+    VisitNumber: '',
+    Load: '',
+    Feature: '',
+    Type: '',
+  };
+}
+
+function normalizeLiveSlot(raw: Partial<NextBusSlot> | undefined): NextBusSlot {
+  if (!raw) return emptySlot();
+  return {
+    OriginCode: raw.OriginCode ?? '',
+    DestinationCode: raw.DestinationCode ?? '',
+    EstimatedArrival: raw.EstimatedArrival ?? '',
+    Latitude: raw.Latitude ?? '',
+    Longitude: raw.Longitude ?? '',
+    VisitNumber: raw.VisitNumber ?? '',
+    Load: (raw.Load as BusLoad) ?? '',
+    Feature: (raw.Feature as 'WAB' | '') ?? '',
+    Type: (raw.Type as BusType) ?? '',
+  };
+}
+
+interface RawLtaService {
+  ServiceNo?: string;
+  Operator?: BusOperator;
+  NextBus?: Partial<NextBusSlot>;
+  NextBus2?: Partial<NextBusSlot>;
+  NextBus3?: Partial<NextBusSlot>;
+}
+
+function mapLiveServices(
+  rawServices: RawLtaService[],
+  catalogStop: BusStopRecord | null
+): BusServiceArrival[] {
+  return rawServices.map((raw) => {
+    const serviceNo = raw.ServiceNo ?? '';
+    const catalogMeta = catalogStop?.Services.find(
+      (s) => s.serviceNo === serviceNo
+    );
+    const nextBus = normalizeLiveSlot(raw.NextBus);
+    const destCode = nextBus.DestinationCode;
+    const destinationName =
+      catalogMeta?.destination ||
+      (destCode ? KNOWN_DESTINATIONS[destCode] || `Terminal ${destCode}` : 'Terminus');
+
+    return {
+      ServiceNo: serviceNo,
+      Operator: raw.Operator ?? catalogMeta?.operator ?? 'SBST',
+      DestinationName: destinationName,
+      FrequencyMinutes: catalogMeta?.frequencyMinutes ?? 0,
+      RouteHighlights: catalogMeta?.routeHighlights ?? [],
+      NextBus: nextBus,
+      NextBus2: normalizeLiveSlot(raw.NextBus2),
+      NextBus3: normalizeLiveSlot(raw.NextBus3),
+    };
+  });
+}
+
+export async function checkApiHealth(): Promise<ApiHealthStatus> {
+  try {
+    const res = await fetch(API_CONFIG.healthEndpoint);
+    if (!res.ok) {
+      return { ok: false, ltaKeyConfigured: false, refreshIntervalSeconds: 20 };
+    }
+    const body = await res.json();
+    return {
+      ok: Boolean(body.ok),
+      ltaKeyConfigured: Boolean(body.ltaKeyConfigured),
+      refreshIntervalSeconds: Number(body.refreshIntervalSeconds) || 20,
+    };
+  } catch {
+    return { ok: false, ltaKeyConfigured: false, refreshIntervalSeconds: 20 };
+  }
+}
+
 export function getAllBusStops(): BusStopRecord[] {
   return SINGAPORE_BUS_STOPS;
 }
@@ -122,8 +235,8 @@ export function searchBusStops(query: string): BusStopRecord[] {
     const matchesDesc = stop.Description.toLowerCase().includes(q);
     const matchesRoad = stop.RoadName.toLowerCase().includes(q);
     const matchesRegion = stop.Region.toLowerCase().includes(q);
-    const matchesService = stop.Services.some((svc) =>
-      svc.serviceNo.toLowerCase() === q
+    const matchesService = stop.Services.some(
+      (svc) => svc.serviceNo.toLowerCase() === q
     );
     return matchesCode || matchesDesc || matchesRoad || matchesRegion || matchesService;
   });
@@ -131,55 +244,118 @@ export function searchBusStops(query: string): BusStopRecord[] {
 
 export async function fetchBusArrival(
   busStopCode: string,
-  options?: { simulateCustomStop?: boolean; refreshNonce?: number }
+  options?: {
+    serviceNo?: string;
+    simulateCustomStop?: boolean;
+    refreshNonce?: number;
+  }
 ): Promise<BusArrivalResponse> {
   const cleanedCode = busStopCode.trim();
+  const catalogStop = getBusStopByCode(cleanedCode);
 
-  if (API_CONFIG.useLiveApi) {
-    const res = await fetch(
-      `${API_CONFIG.baseUrl}?BusStopCode=${encodeURIComponent(cleanedCode)}`
-    );
-    if (!res.ok) {
-      throw new Error(`Bus arrival request failed (${res.status})`);
+  if (/^\d{5}$/.test(cleanedCode)) {
+    try {
+      const params = new URLSearchParams({ BusStopCode: cleanedCode });
+      if (options?.serviceNo?.trim()) {
+        params.set('ServiceNo', options.serviceNo.trim());
+      }
+
+      const res = await fetch(
+        `${API_CONFIG.busArrivalEndpoint}?${params.toString()}`
+      );
+      const body = await res.json().catch(() => ({}));
+
+      if (res.ok) {
+        const rawServices: RawLtaService[] = Array.isArray(body.Services)
+          ? body.Services
+          : [];
+        const liveServices = mapLiveServices(rawServices, catalogStop);
+
+        const stopInfo: BusStopRecord | null =
+          catalogStop ??
+          (liveServices.length > 0
+            ? {
+                BusStopCode: cleanedCode,
+                RoadName: 'Live LTA DataMall Stop',
+                Description: `Bus Stop ${cleanedCode}`,
+                Region: 'Central',
+                Latitude: Number(liveServices[0]?.NextBus.Latitude) || 1.3521,
+                Longitude: Number(liveServices[0]?.NextBus.Longitude) || 103.8198,
+                Services: liveServices.map((s) => ({
+                  serviceNo: s.ServiceNo,
+                  operator: s.Operator,
+                  destination: s.DestinationName,
+                  destinationCode: s.NextBus.DestinationCode,
+                  originCode: s.NextBus.OriginCode,
+                  frequencyMinutes: s.FrequencyMinutes,
+                  typicalType: s.NextBus.Type || 'SD',
+                  wheelchairAccessible: s.NextBus.Feature === 'WAB',
+                  routeHighlights: s.RouteHighlights,
+                })),
+              }
+            : null);
+
+        return {
+          BusStopCode: body.BusStopCode ?? cleanedCode,
+          StopInfo: stopInfo,
+          Services: liveServices,
+          FetchedAt: body.FetchedAt ?? new Date().toISOString(),
+          Source: 'live-api',
+        };
+      }
+
+      // When server key is configured, surface real upstream/validation errors
+      if (res.status !== 503 || body.configured === true) {
+        throw new Error(
+          body.error || `Bus arrival request failed (${res.status}).`
+        );
+      }
+      // If 503 with configured: false (LTA_ACCOUNT_KEY not yet set), fall through to local simulation
+    } catch (err) {
+      // Only rethrow explicit API errors when backend was reached and configured
+      if (
+        err instanceof Error &&
+        !err.message.includes('Failed to fetch') &&
+        !err.message.includes('NetworkError') &&
+        !err.message.includes('LTA_ACCOUNT_KEY')
+      ) {
+        throw err;
+      }
     }
-    const payload = await res.json();
-    return {
-      BusStopCode: cleanedCode,
-      StopInfo: getBusStopByCode(cleanedCode),
-      Services: payload.Services ?? [],
-      FetchedAt: new Date().toISOString(),
-      Source: 'live-api',
-    };
   }
 
-  // Simulated frontend latency (fast, responsive 160ms)
-  await new Promise((resolve) => setTimeout(resolve, 160));
-
-  const stop = getBusStopByCode(cleanedCode);
+  // Fallback simulated schedules while LTA_ACCOUNT_KEY is not yet configured
+  await new Promise((resolve) => setTimeout(resolve, 140));
   const nonce = options?.refreshNonce ?? 0;
 
-  if (stop) {
+  if (catalogStop) {
+    const services = synthesizeServicesForStop(
+      catalogStop.BusStopCode,
+      catalogStop.Services,
+      catalogStop.Latitude,
+      catalogStop.Longitude,
+      nonce
+    );
+    const filtered = options?.serviceNo?.trim()
+      ? services.filter(
+          (s) => s.ServiceNo.toLowerCase() === options.serviceNo?.trim().toLowerCase()
+        )
+      : services;
+
     return {
-      BusStopCode: stop.BusStopCode,
-      StopInfo: stop,
-      Services: synthesizeServicesForStop(
-        stop.BusStopCode,
-        stop.Services,
-        stop.Latitude,
-        stop.Longitude,
-        nonce
-      ),
+      BusStopCode: catalogStop.BusStopCode,
+      StopInfo: catalogStop,
+      Services: filtered,
       FetchedAt: new Date().toISOString(),
       Source: 'simulated',
     };
   }
 
-  // Optional preview generator for valid 5-digit codes not in the offline catalog
   if (options?.simulateCustomStop && /^\d{5}$/.test(cleanedCode)) {
     const previewServices: BusStopServiceMeta[] = [
       {
         serviceNo: '21',
-        operator: 'SBST' as BusOperator,
+        operator: 'SBST',
         destination: 'Saint Michael Ter',
         destinationCode: '52009',
         originCode: cleanedCode,
@@ -190,7 +366,7 @@ export async function fetchBusArrival(
       },
       {
         serviceNo: '85',
-        operator: 'SBST' as BusOperator,
+        operator: 'SBST',
         destination: 'Punggol Int',
         destinationCode: '65009',
         originCode: cleanedCode,
@@ -201,7 +377,7 @@ export async function fetchBusArrival(
       },
       {
         serviceNo: '168',
-        operator: 'SBST' as BusOperator,
+        operator: 'SBST',
         destination: 'Bedok Int',
         destinationCode: '84009',
         originCode: cleanedCode,

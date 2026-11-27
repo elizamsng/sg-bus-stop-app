@@ -68,13 +68,13 @@ export default function App() {
     return () => window.clearInterval(ticker);
   }, []);
 
-  // Periodic data refresh every 30 seconds when auto-refresh is enabled
+  // Periodic data refresh every 20 seconds matching LTA DataMall v3 cadence
   useEffect(() => {
     if (!autoRefresh) return;
     const poller = window.setInterval(() => {
       setNowMs(Date.now());
       setRefreshNonce((n) => n + 1);
-    }, 30000);
+    }, 20000);
     return () => window.clearInterval(poller);
   }, [autoRefresh]);
 
