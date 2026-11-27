@@ -2,5 +2,7 @@
   "name": "SG BusTime",
   "description": "Singapore bus arrival tracker with instant 5-digit bus stop code lookup, live arrival countdowns, and saved favourites.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }
